@@ -14,6 +14,7 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { TaskProgress } from "./task-progress";
 
 function CustomComponent({
   message,
@@ -97,10 +98,12 @@ export function AssistantMessage({
   message,
   isLoading,
   handleRegenerate,
+  isLastMessage: passedIsLastMessage,
 }: {
   message: Message | undefined;
   isLoading: boolean;
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
+  isLastMessage?: boolean;
 }) {
   const content = message?.content ?? [];
   const contentString = getContentString(content);
@@ -111,6 +114,7 @@ export function AssistantMessage({
 
   const thread = useStreamContext();
   const isLastMessage =
+    passedIsLastMessage ??
     thread.messages[thread.messages.length - 1].id === message?.id;
   const hasNoAIOrToolMessages = !thread.messages.find(
     (m) => m.type === "ai" || m.type === "tool",
@@ -159,6 +163,16 @@ export function AssistantMessage({
                 <MarkdownText>{contentString}</MarkdownText>
               </div>
             )}
+
+            {/* Display task progress if todos are available */}
+            {(() => {
+              const todos = (thread.values as any)?.todos;
+
+              // Only show TaskProgress on the last AI message with a valid messageId to prevent duplication
+              return todos && isLastMessage && message?.id ? (
+                <TaskProgress todos={todos} />
+              ) : null;
+            })()}
 
             {!hideToolCalls && (
               <>

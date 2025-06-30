@@ -201,13 +201,21 @@ export function Thread() {
       return;
     setFirstTokenReceived(false);
 
+    // Create content as string instead of array to avoid the PyString conversion error
+    const textContent = input.trim();
+    const hasMultimodalContent = contentBlocks.length > 0;
+
     const newHumanMessage: Message = {
       id: uuidv4(),
       type: "human",
-      content: [
-        ...(input.trim().length > 0 ? [{ type: "text", text: input }] : []),
-        ...contentBlocks,
-      ] as Message["content"],
+      content: hasMultimodalContent
+        ? ([
+            ...(textContent.length > 0
+              ? [{ type: "text", text: textContent }]
+              : []),
+            ...contentBlocks,
+          ] as Message["content"])
+        : textContent, // Use string content when no multimodal blocks
     };
 
     const toolMessages = ensureToolCallsHaveResponses(stream.messages);
@@ -218,7 +226,7 @@ export function Thread() {
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },
       {
-        streamMode: ["values"],
+        streamMode: ["values", "updates"],
         optimisticValues: (prev) => ({
           ...prev,
           context,
@@ -243,7 +251,7 @@ export function Thread() {
     setFirstTokenReceived(false);
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
-      streamMode: ["values"],
+      streamMode: ["values", "updates"],
     });
   };
 
@@ -398,8 +406,12 @@ export function Thread() {
                 <>
                   {messages
                     .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index) =>
-                      message.type === "human" ? (
+                    .filter((m) => m && m.type && m.id)
+                    .map((message, index, filteredMessages) => {
+                      const isLastMessage =
+                        index === filteredMessages.length - 1;
+
+                      return message.type === "human" ? (
                         <HumanMessage
                           key={message.id || `${message.type}-${index}`}
                           message={message}
@@ -411,9 +423,10 @@ export function Thread() {
                           message={message}
                           isLoading={isLoading}
                           handleRegenerate={handleRegenerate}
+                          isLastMessage={isLastMessage}
                         />
-                      ),
-                    )}
+                      );
+                    })}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (

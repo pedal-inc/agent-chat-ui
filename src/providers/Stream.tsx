@@ -4,6 +4,8 @@ import React, {
   ReactNode,
   useState,
   useEffect,
+  useCallback,
+  useMemo,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -85,20 +87,82 @@ const StreamSession = ({
     assistantId,
     threadId: threadId ?? null,
     onCustomEvent: (event, options) => {
+      console.log("🎯 onCustomEvent received:", {
+        event,
+        isUIMessage: isUIMessage(event),
+        isRemoveUIMessage: isRemoveUIMessage(event),
+        options,
+      });
+
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {
           const ui = uiMessageReducer(prev.ui ?? [], event);
+          console.log("🔄 UI state mutated:", { prev, ui, event });
           return { ...prev, ui };
         });
       }
     },
     onThreadId: (id) => {
+      console.log("🧵 Thread ID changed:", id);
       setThreadId(id);
       // Refetch threads list when thread ID changes.
       // Wait for some seconds before fetching so we're able to get the new thread that was created.
       sleep().then(() => getThreads().then(setThreads).catch(console.error));
     },
   });
+
+  // Function to flatten nested messages from LangGraph stream values
+  const flattenNestedMessages = useCallback(
+    (streamValues: any): Message[] => {
+      const topLevelMessages = streamValue.messages || [];
+      const nestedMessages = (streamValues as any)?.messages || [];
+
+      const allMessages: Message[] = [...topLevelMessages];
+
+      // Extract messages from nested message arrays/objects
+      nestedMessages.forEach((item: any) => {
+        if (
+          item &&
+          typeof item === "object" &&
+          item.messages &&
+          Array.isArray(item.messages)
+        ) {
+          item.messages.forEach((msg: any) => {
+            // Only add messages that aren't already in the top-level messages
+            const isDuplicate = allMessages.some(
+              (existing) =>
+                existing.id === msg.id ||
+                (existing.content === msg.content &&
+                  existing.type === msg.type),
+            );
+
+            if (
+              !isDuplicate &&
+              msg.type &&
+              (msg.type === "ai" || msg.type === "tool" || msg.type === "human")
+            ) {
+              allMessages.push(msg);
+            }
+          });
+        }
+      });
+
+      return allMessages;
+    },
+    [streamValue.messages],
+  );
+
+  // Create enhanced stream value with flattened messages
+  const enhancedStreamValue = useMemo(() => {
+    const flattenedMessages = flattenNestedMessages(streamValue.values);
+
+    return {
+      ...streamValue,
+      messages: flattenedMessages,
+      // Keep original messages for reference
+      originalMessages: streamValue.messages,
+    };
+  }, [streamValue, flattenNestedMessages]);
 
   useEffect(() => {
     checkGraphStatus(apiUrl, apiKey).then((ok) => {
@@ -119,7 +183,7 @@ const StreamSession = ({
   }, [apiKey, apiUrl]);
 
   return (
-    <StreamContext.Provider value={streamValue}>
+    <StreamContext.Provider value={enhancedStreamValue}>
       {children}
     </StreamContext.Provider>
   );
