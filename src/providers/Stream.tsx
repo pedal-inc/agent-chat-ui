@@ -4,8 +4,7 @@ import React, {
   ReactNode,
   useState,
   useEffect,
-  useCallback,
-  useMemo,
+  useRef,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -86,6 +85,7 @@ const StreamSession = ({
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
+    messagesKey: "messages",
     onCustomEvent: (event, options) => {
       console.log("🎯 onCustomEvent received:", {
         event,
@@ -111,58 +111,31 @@ const StreamSession = ({
     },
   });
 
-  // Function to flatten nested messages from LangGraph stream values
-  const flattenNestedMessages = useCallback(
-    (streamValues: any): Message[] => {
-      const topLevelMessages = streamValue.messages || [];
-      const nestedMessages = (streamValues as any)?.messages || [];
-
-      const allMessages: Message[] = [...topLevelMessages];
-
-      // Extract messages from nested message arrays/objects
-      nestedMessages.forEach((item: any) => {
-        if (
-          item &&
-          typeof item === "object" &&
-          item.messages &&
-          Array.isArray(item.messages)
-        ) {
-          item.messages.forEach((msg: any) => {
-            // Only add messages that aren't already in the top-level messages
-            const isDuplicate = allMessages.some(
-              (existing) =>
-                existing.id === msg.id ||
-                (existing.content === msg.content &&
-                  existing.type === msg.type),
-            );
-
-            if (
-              !isDuplicate &&
-              msg.type &&
-              (msg.type === "ai" || msg.type === "tool" || msg.type === "human")
-            ) {
-              allMessages.push(msg);
-            }
-          });
-        }
+  // Add debugging to track stream state changes
+  const prevStreamMessagesRef = useRef<number>(0);
+  useEffect(() => {
+    const currentCount = streamValue.messages?.length || 0;
+    if (currentCount !== prevStreamMessagesRef.current) {
+      console.log("🔍 STREAM STATE CHANGE:", {
+        previous: prevStreamMessagesRef.current,
+        current: currentCount,
+        change:
+          currentCount > prevStreamMessagesRef.current
+            ? "growing"
+            : "shrinking",
+        difference: currentCount - prevStreamMessagesRef.current,
+        threadId: threadId,
+        messages: streamValue.messages?.map((m) => ({
+          type: m.type,
+          content:
+            typeof m.content === "string"
+              ? m.content.substring(0, 50) + "..."
+              : "non-string",
+        })),
       });
-
-      return allMessages;
-    },
-    [streamValue.messages],
-  );
-
-  // Create enhanced stream value with flattened messages
-  const enhancedStreamValue = useMemo(() => {
-    const flattenedMessages = flattenNestedMessages(streamValue.values);
-
-    return {
-      ...streamValue,
-      messages: flattenedMessages,
-      // Keep original messages for reference
-      originalMessages: streamValue.messages,
-    };
-  }, [streamValue, flattenNestedMessages]);
+      prevStreamMessagesRef.current = currentCount;
+    }
+  }, [streamValue.messages, threadId]);
 
   useEffect(() => {
     checkGraphStatus(apiUrl, apiKey).then((ok) => {
@@ -183,7 +156,7 @@ const StreamSession = ({
   }, [apiKey, apiUrl]);
 
   return (
-    <StreamContext.Provider value={enhancedStreamValue}>
+    <StreamContext.Provider value={streamValue}>
       {children}
     </StreamContext.Provider>
   );
